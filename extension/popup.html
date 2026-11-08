@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Tab Manager MCP</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>MCP</h1>
+  <div id="mcp">
+    <label><input type="checkbox" id="enabled"> Let AI agents read tabs and manage tab groups</label>
+    <div id="status"></div>
+    <div class="actions">
+      <button id="copy-config">Copy MCP server config</button>
+    </div>
+  </div>
+  <h1>Tab Groups</h1>
+  <div id="groups"></div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "name": "chromium-tab-manager-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that lets AI agents read tabs and manage tab groups in Chrome and Edge through the Tab Manager MCP extension.",
+  "keywords": ["mcp", "model-context-protocol", "chrome", "edge", "chromium", "tabs", "tab-groups", "browser-extension"],
+  "license": "MIT",
+  "author": "Dmitrij Drandarov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drandarov-io/extension-chromium-tab-manager.git"
+  },
+  "homepage": "https://github.com/drandarov-io/extension-chromium-tab-manager#readme",
+  "bugs": "https://github.com/drandarov-io/extension-chromium-tab-manager/issues",
+  "type": "module",
+  "bin": {
+    "chromium-tab-manager-mcp": "server/server.js"
+  },
+  "files": [
+    "server"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test --test-timeout=60000 \"test/*.test.js\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "ws": "^8.22.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.65.0"
+  }
+}
