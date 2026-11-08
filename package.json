@@ -1,6 +1,6 @@
 {
   "name": "chromium-tab-manager-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server that lets AI agents read tabs and manage tab groups in Chrome and Edge through the Tab Manager MCP extension.",
   "keywords": ["mcp", "model-context-protocol", "chrome", "edge", "chromium", "tabs", "tab-groups", "browser-extension"],
   "license": "MIT",

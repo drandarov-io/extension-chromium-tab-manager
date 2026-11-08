@@ -1,9 +1,9 @@
-// Tab and tab group functions. The service worker answers MCP requests with them, and the popup lists groups with them.
+// Tab and tab group functions. The service worker answers MCP requests with them, and the popup lists groups and copies their links with them.
 
 const toTab = ({ id, windowId, index, groupId, title, url, pendingUrl, active, pinned, audible, discarded }) =>
   ({ id, windowId, index, groupId, title, url: url || pendingUrl, active, pinned, audible, discarded });
 
-const toGroup = ({ id, windowId, title, color, collapsed }, tabs) => ({ id, windowId, title, color, collapsed, tabs });
+const toGroup = ({ id, windowId, title, color, collapsed }) => ({ id, windowId, title, color, collapsed });
 
 // Chrome rejects with "No tab with id" for a stale ID, so no change starts with an unknown tab.
 const getTabs = tabIds => Promise.all(tabIds.map(id => chrome.tabs.get(id)));
@@ -16,12 +16,18 @@ export const listTabs = async ({ windowId, groupId, text } = {}) => {
 };
 
 export const listGroups = async windowId => {
-  const [groups, tabs] = await Promise.all([chrome.tabGroups.query({ windowId }), listTabs({ windowId })]);
+  const [groups, tabs] = await Promise.all([chrome.tabGroups.query({ windowId }), chrome.tabs.query({ windowId })]);
   const tabsByGroup = Object.groupBy(tabs, tab => tab.groupId);
-  return groups.map(group => toGroup(group, tabsByGroup[group.id] ?? []));
+  return groups.map(group => ({ ...toGroup(group), tabCount: tabsByGroup[group.id]?.length ?? 0 }));
 };
 
-const getGroup = async groupId => toGroup(await chrome.tabGroups.get(groupId), await listTabs({ groupId }));
+// Chrome rejects with "No group with id" for a stale ID, instead of an empty list.
+export const listGroupTabs = async ({ groupId }) => {
+  await chrome.tabGroups.get(groupId);
+  return listTabs({ groupId });
+};
+
+const getGroup = async groupId => ({ ...toGroup(await chrome.tabGroups.get(groupId)), tabs: await listTabs({ groupId }) });
 
 export const createGroup = async ({ tabIds, title, color, collapsed }) => {
   const tabs = await getTabs(tabIds);

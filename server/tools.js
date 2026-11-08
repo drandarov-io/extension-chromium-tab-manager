@@ -3,7 +3,7 @@ import { z } from 'zod';
 import pkg from '../package.json' with { type: 'json' };
 
 const id = z.number().int();
-const tabIds = z.array(id).min(1).describe('IDs of tabs, from list_tabs or list_tab_groups.');
+const tabIds = z.array(id).min(1).describe('IDs of tabs, from list_tabs or list_group_tabs.');
 const groupId = id.describe('ID of a tab group, from list_tab_groups.');
 const groupFields = {
   title: z.string().optional().describe('Name of the group.'),
@@ -25,8 +25,13 @@ const tools = {
     annotations: reads,
   },
   list_tab_groups: {
-    description: 'List tab groups with ID, window, title, color, collapsed state and their tabs.',
+    description: 'List tab groups with ID, window, title, color, collapsed state and number of tabs. Use list_group_tabs for the tabs of a group.',
     inputSchema: { windowId: id.optional().describe('Only groups in this window.') },
+    annotations: reads,
+  },
+  list_group_tabs: {
+    description: 'List the tabs of a tab group in their order, with ID, window, position, title and URL. Page content is not included.',
+    inputSchema: { groupId },
     annotations: reads,
   },
   create_tab_group: {
@@ -51,7 +56,7 @@ const tools = {
   },
 };
 
-const instructions = 'Tab Manager MCP reads the title and URL of open browser tabs and manages tab groups through a browser extension. Tab, group and window IDs are valid only until the browser restarts. Call list_tab_groups or list_tabs before you make a change, and use the IDs that they return.';
+const instructions = 'Tab Manager MCP reads the title and URL of open browser tabs and manages tab groups through a browser extension. Tab, group and window IDs are valid only until the browser restarts. Call list_tab_groups, list_group_tabs or list_tabs before you make a change, and use the IDs that they return.';
 
 // call(method, params) runs the method in the browser extension and resolves with its result.
 export const createMcpServer = call => {

@@ -6,16 +6,19 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <h1>MCP</h1>
-  <div id="mcp">
-    <label><input type="checkbox" id="enabled"> Let AI agents read tabs and manage tab groups</label>
-    <div id="status"></div>
+  <section>
+    <h1>MCP</h1>
+    <label class="switch"><input type="checkbox" role="switch" id="enabled"> Let AI agents read tabs and manage tab groups</label>
+    <p id="status"></p>
     <div class="actions">
       <button id="copy-config">Copy MCP server config</button>
+      <button id="new-token">New token</button>
     </div>
-  </div>
-  <h1>Tab Groups</h1>
-  <div id="groups"></div>
+  </section>
+  <section>
+    <h1>Tab Groups</h1>
+    <div id="groups"></div>
+  </section>
   <script type="module" src="popup.js"></script>
 </body>
 </html>

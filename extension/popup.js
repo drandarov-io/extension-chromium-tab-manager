@@ -1,4 +1,4 @@
-import { listGroups } from './tabs.js';
+import { listGroups, listTabs } from './tabs.js';
 
 // Chromium tab group colors
 const COLORS = {
@@ -28,15 +28,18 @@ const copy = (button, text) =>
 const createButton = (label, onclick) =>
   Object.assign(document.createElement('button'), { textContent: label, onclick: event => onclick(event.target) });
 
-// MCP section. The service worker writes the status, and the popup writes the switch.
+// MCP section. The service worker writes the status and the first token, and the popup writes the switch and new tokens.
+const servers = count => `${count} MCP server${count > 1 ? 's' : ''}`;
+
 const showStatus = async () => {
   const [{ enabled }, { status = {} }] = await Promise.all([chrome.storage.local.get({ enabled: true }), chrome.storage.session.get('status')]);
   $('enabled').checked = enabled;
-  $('status').textContent = [
-    !enabled ? 'Off. AI agents cannot read tabs or change tab groups.'
-      : status.connected ? `Connected to ${status.connected} MCP server${status.connected > 1 ? 's' : ''}.`
-      : 'No MCP server found. Add the MCP server config to your MCP client and start the server.',
-    enabled && status.message,
+  $('status').dataset.state = !enabled ? 'off' : status.connected ? 'connected' : 'waiting';
+  $('status').textContent = !enabled ? 'Off. AI agents cannot read tabs or change tab groups.' : [
+    status.connected ? `Connected to ${servers(status.connected)}.`
+      : !status.mismatched && 'No MCP server found. Add the MCP server config to your MCP client and start the server.',
+    status.mismatched && `Found ${servers(status.mismatched)} with another token. Copy the MCP server config again and restart the server.`,
+    status.message,
   ].filter(Boolean).join(' ');
 };
 
@@ -50,30 +53,31 @@ chrome.storage.onChanged.addListener(changes => {
 
 $('enabled').onchange = event => chrome.storage.local.set({ enabled: event.target.checked });
 
-// The server accepts only the store IDs. An unpacked copy has another ID, which the config must add.
 $('copy-config').onclick = async event => {
-  const { installType } = await chrome.management.getSelf();
-  const env = installType === 'development' ? { env: { TAB_MANAGER_EXTENSION_IDS: chrome.runtime.id } } : {};
-  copy(event.target, `"tab-manager": ${JSON.stringify({ command: 'npx', args: ['-y', 'chromium-tab-manager-mcp'], ...env }, null, 2)}`);
+  const { token } = await chrome.storage.local.get('token');
+  copy(event.target, `"tab-manager": ${JSON.stringify({ command: 'npx', args: ['-y', 'chromium-tab-manager-mcp'], env: { TAB_MANAGER_TOKEN: token } }, null, 2)}`);
 };
 
-// Tab group section.
+// The service worker closes the connections of the old token. MCP servers with the old token stop working.
+$('new-token').onclick = async event => {
+  await chrome.storage.local.set({ token: crypto.randomUUID() });
+  flash(event.target, 'Copy the config again');
+};
+
+// Tab group section. The copy buttons read the tabs when they are clicked.
 const groups = await listGroups();
 
 if (groups.length) {
   $('groups').replaceChildren(...groups.map(group => {
-    const row = document.createElement('div');
-    row.className = 'group';
-    row.style.borderLeft = `8px solid ${COLORS[group.color] ?? '#888'}`;
-
-    const name = document.createElement('span');
-    name.className = 'group-name';
-    name.textContent = group.title || '(No Name)';
+    const row = Object.assign(document.createElement('div'), { className: 'group' });
+    row.style.setProperty('--color', COLORS[group.color] ?? '#888');
+    const copyTabs = format => async button => copy(button, (await listTabs({ groupId: group.id })).map(format).join('\r\n'));
 
     row.append(
-      name,
-      createButton('Copy URLs', button => copy(button, group.tabs.map(tab => tab.url).join('\r\n'))),
-      createButton('Copy Markdown', button => copy(button, group.tabs.map(tab => `- [${tab.title}](${tab.url})`).join('\r\n'))),
+      Object.assign(document.createElement('span'), { className: 'name', textContent: group.title || '(No Name)', title: group.title }),
+      Object.assign(document.createElement('span'), { className: 'count', textContent: group.tabCount, title: `${group.tabCount} tabs` }),
+      createButton('Copy URLs', copyTabs(tab => tab.url)),
+      createButton('Copy Markdown', copyTabs(tab => `- [${tab.title}](${tab.url})`)),
     );
     return row;
   }));

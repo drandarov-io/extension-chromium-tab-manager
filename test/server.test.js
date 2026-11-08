@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHmac, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { createInterface } from 'node:readline';
@@ -10,8 +11,10 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import WebSocket from 'ws';
 
 const serverPath = fileURLToPath(new URL('../server/server.js', import.meta.url));
-const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
-const ORIGIN = `chrome-extension://${EXTENSION_ID}`;
+const ORIGIN = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
+const TOKEN = randomUUID();
+
+const hmac = (token, ...parts) => createHmac('sha256', token).update(parts.join(':')).digest('hex');
 
 // Returns a port that was free a moment ago. The server takes the next free port from it.
 const freePort = async () => {
@@ -36,18 +39,19 @@ const startServer = async (t, env = {}) => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverPath],
-    env: { ...process.env, TAB_MANAGER_EXTENSION_IDS: EXTENSION_ID, TAB_MANAGER_PORT: String(await freePort()), ...env },
+    env: { ...process.env, TAB_MANAGER_TOKEN: TOKEN, TAB_MANAGER_PORT: String(await freePort()), ...env },
     stderr: 'pipe',
   });
   const client = new Client({ name: 'test', version: '1.0.0' });
   await client.connect(transport);
   t.after(() => client.close());
-  const [, port, error] = await waitForLog(transport.stderr, /on ws:\/\/127\.0\.0\.1:(\d+)|(Ports .* are in use)/);
+  const [, port, error] = await waitForLog(transport.stderr, /on ws:\/\/127\.0\.0\.1:(\d+)|(Ports .* are in use|TAB_MANAGER_TOKEN is not set)/);
   return { client, port: Number(port), error };
 };
 
-// Plays the extension: handler(method, params) answers each request. Returns the HTTP status of a refused connection.
-const connectBrowser = async (t, port, handler = () => ({}), origin = ORIGIN) => {
+// Plays the extension: checks the proof of the server, proves the token, and then handler(method, params) answers each request.
+// Returns the HTTP status of a refused connection.
+const connectBrowser = async (t, port, handler = () => ({}), { origin = ORIGIN, token = TOKEN } = {}) => {
   const socket = new WebSocket(`ws://127.0.0.1:${port}`, { origin });
   const status = await Promise.race([
     once(socket, 'open').then(() => t.after(() => socket.close())),
@@ -57,6 +61,15 @@ const connectBrowser = async (t, port, handler = () => ({}), origin = ORIGIN) =>
       return res.statusCode;
     }),
   ]);
+  if (status)
+    return { socket, status };
+
+  const nonce = randomUUID();
+  socket.send(JSON.stringify({ nonce }));
+  const { nonce: serverNonce, proof } = JSON.parse((await once(socket, 'message'))[0]);
+  assert.equal(proof, hmac(TOKEN, 'server', nonce, serverNonce));
+  socket.send(JSON.stringify({ proof: hmac(token, 'extension', nonce, serverNonce) }));
+
   socket.on('message', async data => {
     const { id, method, params } = JSON.parse(data);
     try {
@@ -71,7 +84,7 @@ const connectBrowser = async (t, port, handler = () => ({}), origin = ORIGIN) =>
 test('lists the tools', async t => {
   const { client } = await startServer(t);
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(tool => tool.name).sort(), ['add_tabs_to_group', 'create_tab_group', 'list_tab_groups', 'list_tabs', 'ungroup_tabs', 'update_tab_group']);
+  assert.deepEqual(tools.map(tool => tool.name).sort(), ['add_tabs_to_group', 'create_tab_group', 'list_group_tabs', 'list_tab_groups', 'list_tabs', 'ungroup_tabs', 'update_tab_group']);
 });
 
 test('sends a tool call to the browser and returns its result', async t => {
@@ -136,12 +149,30 @@ test('returns a tool error when the browser does not answer or disconnects', asy
   assert.match(disconnected.content[0].text, /disconnected before it answered/);
 });
 
-test('accepts only the extension origin', async t => {
+test('accepts only extension origins', async t => {
   const { port } = await startServer(t);
-  assert.equal((await connectBrowser(t, port, undefined, 'https://example.com')).status, 403);
-  assert.equal((await connectBrowser(t, port, undefined, 'chrome-extension://otherextensionidotherextensionid')).status, 403);
-  assert.equal((await connectBrowser(t, port, undefined, null)).status, 403);
+  assert.equal((await connectBrowser(t, port, undefined, { origin: 'https://example.com' })).status, 403);
+  assert.equal((await connectBrowser(t, port, undefined, { origin: null })).status, 403);
   assert.equal((await connectBrowser(t, port)).status, undefined);
+});
+
+test('proves the token, and closes a connection that cannot prove it', async t => {
+  const { client, port } = await startServer(t, { TAB_MANAGER_CONNECT_TIMEOUT_MS: '1000' });
+  const { socket } = await connectBrowser(t, port, () => 'wrong', { token: 'other token' });
+
+  const [code] = await once(socket, 'close');
+  assert.equal(code, 4001);
+  const result = await client.callTool({ name: 'list_tabs', arguments: {} });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /No browser is connected/);
+});
+
+test('reports a missing token', async t => {
+  const { client, error } = await startServer(t, { TAB_MANAGER_TOKEN: '' });
+  assert.match(error, /TAB_MANAGER_TOKEN is not set/);
+  const result = await client.callTool({ name: 'list_tabs', arguments: {} });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /TAB_MANAGER_TOKEN is not set/);
 });
 
 test('keeps the first browser and closes the connection of a second one', async t => {
@@ -175,7 +206,7 @@ test('a second server takes the next port, and the server reports when all ports
 });
 
 test('exits when the MCP client closes stdin', async () => {
-  const child = spawn(process.execPath, [serverPath], { env: { ...process.env, TAB_MANAGER_PORT: String(await freePort()) }, stdio: ['pipe', 'ignore', 'pipe'] });
+  const child = spawn(process.execPath, [serverPath], { env: { ...process.env, TAB_MANAGER_TOKEN: TOKEN, TAB_MANAGER_PORT: String(await freePort()) }, stdio: ['pipe', 'ignore', 'pipe'] });
   await waitForLog(child.stderr, /Waiting for the browser extension/);
   child.stdin.end();
   const [code] = await once(child, 'exit');

@@ -23,6 +23,9 @@ before(async () => {
   });
   worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
   extensionId = new URL(worker.url()).host;
+  // The service worker creates the token when it starts for the first time.
+  while (!(await inExtension(() => chrome.storage.local.get('token'))).token)
+    await new Promise(resolve => setTimeout(resolve, 50));
 
   // Pages whose title is their path.
   web = createHttpServer((req, res) => res.writeHead(200, { 'content-type': 'text/html' }).end(`<title>${req.url.slice(1)}</title>`)).listen(0, '127.0.0.1');
@@ -42,11 +45,12 @@ after(async () => {
 
 // Starts a server as an MCP client does, and lets the extension connect to it now.
 const startServer = async (t, env = {}) => {
+  const { token } = await inExtension(() => chrome.storage.local.get('token'));
   const client = new Client({ name: 'test', version: '1.0.0' });
   await client.connect(new StdioClientTransport({
     command: process.execPath,
     args: [serverPath],
-    env: { ...process.env, TAB_MANAGER_EXTENSION_IDS: extensionId, TAB_MANAGER_PORT: String(firstPort), TAB_MANAGER_CONNECT_TIMEOUT_MS: '5000', ...env },
+    env: { ...process.env, TAB_MANAGER_TOKEN: token, TAB_MANAGER_PORT: String(firstPort), TAB_MANAGER_CONNECT_TIMEOUT_MS: '5000', ...env },
     stderr: 'ignore',
   }));
   t.after(() => client.close());
@@ -90,7 +94,8 @@ test('reads tabs and changes tab groups, and keeps groups that it does not chang
   }, [one, two]);
 
   const listed = (await call('list_tab_groups')).find(group => group.id === klipper);
-  assert.deepEqual({ ...listed, tabs: listed.tabs.map(tab => tab.id) }, { id: klipper, windowId: listed.windowId, title: 'Klipper', color: 'green', collapsed: false, tabs: [one, two] });
+  assert.deepEqual(listed, { id: klipper, windowId: listed.windowId, title: 'Klipper', color: 'green', collapsed: false, tabCount: 2 });
+  assert.deepEqual((await call('list_group_tabs', { groupId: klipper })).map(tab => tab.id), [one, two]);
   assert.deepEqual((await call('list_tabs', { text: 'THREE' })).map(tab => tab.id), [three]);
   assert.deepEqual((await call('list_tabs', { groupId: klipper })).map(tab => tab.id), [one, two]);
 
@@ -107,6 +112,7 @@ test('reads tabs and changes tab groups, and keeps groups that it does not chang
   // Ungrouping the last tabs removes the group, and its ID becomes stale.
   await call('ungroup_tabs', { tabIds: [two, three] });
   await assert.rejects(call('update_tab_group', { groupId: created.id, title: 'Gone' }), /No group with id/);
+  await assert.rejects(call('list_group_tabs', { groupId: created.id }), /No group with id/);
   await assert.rejects(call('ungroup_tabs', { tabIds: [999_999] }), /No tab with id/);
   await assert.rejects(call('update_tab_group', { groupId: klipper }), /Pass at least one/);
 
@@ -149,8 +155,15 @@ test('serves two MCP servers, and the switch disconnects them', async t => {
   assert.ok((await first.call('list_tabs')).length);
 });
 
+test('answers no MCP server that has another token', async t => {
+  const { call } = await startServer(t, { TAB_MANAGER_TOKEN: 'other token', TAB_MANAGER_CONNECT_TIMEOUT_MS: '1000' });
+  await assert.rejects(call('list_tabs'), /No browser is connected/);
+  const { status } = await inExtension(() => chrome.storage.session.get('status'));
+  assert.deepEqual([status.connected, status.mismatched], [0, 1]);
+});
+
 test('the popup shows the status and copies group links and the MCP config', async t => {
-  await startServer(t);
+  const { call } = await startServer(t);
   const [one, two] = await openTabs('alpha', 'beta');
   await inExtension(async tabIds => {
     const groupId = await chrome.tabs.group({ tabIds });
@@ -165,15 +178,26 @@ test('the popup shows the status and copies group links and the MCP config', asy
 
   await page.getByText('Connected to 1 MCP server.').waitFor();
   const row = page.locator('.group', { hasText: 'Copy me' });
+  assert.equal(await row.locator('.count').textContent(), '2');
   await row.getByRole('button', { name: 'Copy URLs' }).click();
   assert.equal(await page.evaluate(() => window.copied), `http://127.0.0.1:${web.address().port}/alpha\r\nhttp://127.0.0.1:${web.address().port}/beta`);
   await row.getByRole('button', { name: 'Copy Markdown' }).click();
   assert.equal(await page.evaluate(() => window.copied), `- [alpha](http://127.0.0.1:${web.address().port}/alpha)\r\n- [beta](http://127.0.0.1:${web.address().port}/beta)`);
 
+  const { token } = await inExtension(() => chrome.storage.local.get('token'));
   await page.getByRole('button', { name: 'Copy MCP server config' }).click();
   assert.deepEqual(JSON.parse(`{${await page.evaluate(() => window.copied)}}`), {
-    'tab-manager': { command: 'npx', args: ['-y', 'chromium-tab-manager-mcp'], env: { TAB_MANAGER_EXTENSION_IDS: extensionId } },
+    'tab-manager': { command: 'npx', args: ['-y', 'chromium-tab-manager-mcp'], env: { TAB_MANAGER_TOKEN: token } },
   });
+
+  // A new token disconnects the server with the old one, and the copied config has the new token.
+  await page.getByRole('button', { name: 'New token' }).click();
+  await page.getByText('Found 1 MCP server with another token.').waitFor();
+  await assert.rejects(call('list_tabs'), /No browser is connected/);
+  const { token: newToken } = await inExtension(() => chrome.storage.local.get('token'));
+  assert.notEqual(newToken, token);
+  await page.getByRole('button', { name: 'Copy MCP server config' }).click();
+  assert.equal(JSON.parse(`{${await page.evaluate(() => window.copied)}}`)['tab-manager'].env.TAB_MANAGER_TOKEN, newToken);
 
   await page.getByLabel('Let AI agents read tabs').uncheck();
   await page.getByText('Off. AI agents cannot read tabs').waitFor();
