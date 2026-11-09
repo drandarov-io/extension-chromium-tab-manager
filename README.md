@@ -5,6 +5,8 @@ Tab Manager MCP lets AI agents read the titles and URLs of your browser tabs and
 - The browser extension "Tab Manager MCP" in the [extension](extension) folder. Its popup also copies the links of a tab group as a list of URLs or as Markdown.
 - The MCP server, the npm package `chromium-tab-manager-mcp` in the [server](server) folder. Your MCP client starts it.
 
+![Tab Manager MCP popup showing the MCP connection and tab-group copy controls](docs/screenshot-1.png)
+
 ## Setup
 
 You need Chrome or Edge 123 or later, and Node.js 22.18 or later.
@@ -69,9 +71,11 @@ Tab, group and window IDs are valid until the browser restarts. A group that los
 
 The extension and the server send no data to the developer or to other services, and they contain no analytics.
 
+Tab Manager MCP's use and transfer of user data comply with the Chrome Web Store User Data Policy, including its [Limited Use requirements](https://developer.chrome.com/docs/webstore/program-policies/limited-use).
+
 | Subject | Policy |
 |---------|--------|
-| Data that the extension reads | Of each tab: ID, window, position, group, title, URL, and the active, pinned, audible and discarded state. Of each tab group: ID, window, title, color and collapsed state. The extension does not read page content, cookies, passwords or history. |
+| Data that the extension reads | Of each tab: ID, window, position, group, title, URL, and the active, pinned, audible and discarded state. Of each tab group: ID, window, title, color and collapsed state. The extension does not read page content, cookies, passwords or saved browsing history. |
 | Tabs in scope | All tabs in all windows of the browser profile. Incognito tabs only if you allow the extension in incognito windows. |
 | Where the data goes | Only to the MCP server on 127.0.0.1 on your computer. The server gives it to the MCP client that started it. Your MCP client can send it to an AI model service, and the policy of that service applies. |
 | Data that the extension stores | The position of the switch, the token, and the connection status, in browser storage. |
